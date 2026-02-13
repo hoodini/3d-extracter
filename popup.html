@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Model Extractor</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 400px;
+      min-height: 300px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #1e1e1e;
+      color: #e0e0e0;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      text-align: center;
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      color: white;
+      margin-bottom: 5px;
+    }
+
+    .header p {
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.8);
+    }
+
+    .content {
+      padding: 15px;
+    }
+
+    .status {
+      padding: 12px;
+      background: #2d2d2d;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      text-align: center;
+      font-size: 13px;
+    }
+
+    .status.success {
+      background: #1a472a;
+      color: #4ade80;
+    }
+
+    .status.info {
+      background: #1e3a5f;
+      color: #60a5fa;
+    }
+
+    .status.empty {
+      background: #3d2d1f;
+      color: #fbbf24;
+    }
+
+    .models-list {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .model-item {
+      background: #2d2d2d;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 10px;
+      border: 1px solid #3d3d3d;
+      transition: all 0.2s;
+    }
+
+    .model-item:hover {
+      border-color: #667eea;
+      background: #333;
+    }
+
+    .model-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .model-filename {
+      font-size: 13px;
+      font-weight: 600;
+      color: #fff;
+      word-break: break-word;
+      flex: 1;
+      margin-right: 10px;
+    }
+
+    .model-size {
+      font-size: 11px;
+      color: #888;
+      white-space: nowrap;
+    }
+
+    .model-url {
+      font-size: 11px;
+      color: #888;
+      word-break: break-all;
+      margin-bottom: 10px;
+      line-height: 1.4;
+    }
+
+    .model-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn {
+      flex: 1;
+      padding: 8px 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-download {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+
+    .btn-download:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-copy {
+      background: #3d3d3d;
+      color: #e0e0e0;
+    }
+
+    .btn-copy:hover {
+      background: #4d4d4d;
+    }
+
+    .btn-clear {
+      width: 100%;
+      padding: 10px;
+      background: #3d2d1f;
+      color: #fbbf24;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    .btn-clear:hover {
+      background: #4d3d2f;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+    }
+
+    .empty-icon {
+      font-size: 48px;
+      margin-bottom: 15px;
+      opacity: 0.5;
+    }
+
+    .empty-text {
+      font-size: 14px;
+      color: #888;
+      line-height: 1.6;
+    }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: #1e1e1e;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: #4d4d4d;
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: #5d5d5d;
+    }
+
+    .loading {
+      text-align: center;
+      padding: 20px;
+      color: #888;
+    }
+
+    .spinner {
+      border: 3px solid #3d3d3d;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto 10px;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🎨 3D Model Extractor</h1>
+    <p>Find and download GLB/GLTF files</p>
+  </div>
+
+  <div class="content">
+    <div id="status" class="status info">
+      <div class="loading">
+        <div class="spinner"></div>
+        Scanning for 3D models...
+      </div>
+    </div>
+
+    <div id="models-container"></div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
