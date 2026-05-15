@@ -138,6 +138,13 @@ function renderModels() {
     dlBtn.addEventListener('click', () => downloadModel(dlBtn, model.url, model.filename));
     actions.appendChild(dlBtn);
 
+    const idBtn = document.createElement('button');
+    idBtn.className = 'btn btn-identify';
+    idBtn.textContent = '🔍 Identify';
+    idBtn.title = 'Fetch the first 8KB and identify the real file format from its magic bytes.';
+    idBtn.addEventListener('click', () => identifyModel(idBtn, item, model));
+    actions.appendChild(idBtn);
+
     const copyBtn = document.createElement('button');
     copyBtn.className = 'btn btn-copy';
     copyBtn.textContent = '📋 Copy URL';
@@ -147,6 +154,11 @@ function renderModels() {
     item.appendChild(header);
     item.appendChild(urlDiv);
     item.appendChild(actions);
+
+    if (model.detected) {
+      item.appendChild(renderIdentifyResult(model.detected, null));
+    }
+
     list.appendChild(item);
   });
 
@@ -328,6 +340,82 @@ function downloadModel(btn, url, filename) {
       }, 1800);
     }
   );
+}
+
+function identifyModel(btn, item, model) {
+  const original = btn.textContent;
+  btn.textContent = '⏳ Identifying...';
+  btn.disabled = true;
+  chrome.runtime.sendMessage(
+    { action: 'identifyModel', tabId: currentTabId, url: model.url },
+    (resp) => {
+      btn.disabled = false;
+      btn.textContent = original;
+      if (!resp || !resp.success) {
+        const err = renderIdentifyResult({
+          format: 'unknown',
+          confidence: 'none',
+          hint: (resp && resp.error) || 'Identify failed.'
+        }, null);
+        replaceOrAppendResult(item, err);
+        return;
+      }
+      const block = renderIdentifyResult(resp.result, resp.siblingGltf);
+      replaceOrAppendResult(item, block);
+      // Refresh so renamed filename/format show up in the header.
+      refresh();
+    }
+  );
+}
+
+function replaceOrAppendResult(item, newBlock) {
+  const existing = item.querySelector('.identify-result');
+  if (existing) existing.replaceWith(newBlock);
+  else item.appendChild(newBlock);
+}
+
+function renderIdentifyResult(result, siblingGltf) {
+  const block = document.createElement('div');
+  const conf = result.confidence || 'low';
+  block.className = 'identify-result ' + (conf === 'high' ? 'high' : conf === 'medium' ? 'medium' : 'low');
+
+  const verdict = document.createElement('div');
+  verdict.className = 'verdict';
+  if (result.format && result.format !== 'unknown' && result.format !== 'bin') {
+    verdict.textContent = `Detected: .${result.format}  (${conf} confidence)`;
+  } else if (result.format === 'bin') {
+    verdict.textContent = `Detected: raw binary buffer  (low confidence)`;
+  } else {
+    verdict.textContent = 'Could not identify format';
+  }
+  block.appendChild(verdict);
+
+  if (result.hint) {
+    const hint = document.createElement('div');
+    hint.className = 'hint';
+    hint.textContent = result.hint;
+    block.appendChild(hint);
+  }
+
+  if (siblingGltf) {
+    const sib = document.createElement('div');
+    sib.className = 'sibling';
+    sib.appendChild(document.createTextNode('Found a sibling .gltf in this tab: '));
+    const link = document.createElement('a');
+    link.textContent = 'flag + download it';
+    link.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ action: 'flagAsModel', tabId: currentTabId, url: siblingGltf }, () => refresh());
+    });
+    sib.appendChild(link);
+    block.appendChild(sib);
+  } else if (result.format === 'bin') {
+    const sib = document.createElement('div');
+    sib.className = 'sibling';
+    sib.textContent = 'No sibling .gltf found in this tab\'s request log. Try reloading the page with the extension popup open so we can capture it.';
+    block.appendChild(sib);
+  }
+
+  return block;
 }
 
 function copyUrl(btn, url) {

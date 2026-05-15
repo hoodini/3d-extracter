@@ -139,6 +139,37 @@ inkscape icons/icon.svg --export-filename=icons/icon128.png -w 128 -h 128
    - Click **📋 Copy URL** to copy the model URL
    - Use **🗑️ Clear Models** to reset the detected models
 
+### Got a `.bin` file? Use 🔍 Identify
+
+If a model is downloaded as `.bin` (or any unhelpful extension), click **🔍 Identify** on the model card. The extension fetches the first 8 KB of the file and inspects its **magic bytes** to determine the real format. If recognized, the model is renamed in place — the next download will save it with the correct extension (`.glb`, `.gltf`, `.fbx`, `.stl`, etc.).
+
+Recognized signatures:
+
+| Format | How we detect it |
+|--------|------------------|
+| **GLB** | First 4 bytes = `glTF` |
+| **glTF JSON** | Starts with `{` and contains `"asset"` + `"buffers"`/`"meshes"`/`"version"` |
+| **FBX Binary** | Starts with `Kaydara FBX Binary` |
+| **3MF / USDZ / ZAE / `.blend`** | ZIP header (`PK\x03\x04`) + archive-content inspection |
+| **STL ASCII** | Starts with `solid ` |
+| **STL Binary** | 80-byte header + plausible triangle count |
+| **PLY** | Starts with `ply\n` |
+| **OBJ** | Multiple lines starting with `v `/`vn `/`vt `/`f `/`mtllib ` |
+| **Collada (DAE)** | XML containing `COLLADA` |
+| **X3D / VRML** | `<X3D` tag or `#VRML` header |
+| **3DS** | Primary chunk magic `MM` (0x4D4D) |
+| **Blender** | Starts with `BLENDER` |
+
+#### Special case: glTF buffer files
+
+When a website serves a `.gltf` (JSON) file, it usually references one or more `.bin` files for vertex/index/animation data. **Those `.bin` files are NOT standalone models** — they're useless without the parent `.gltf`. When Identify detects a raw binary buffer, the extension will:
+
+1. Show a warning that the file is likely a glTF buffer
+2. Search this tab's request log for a sibling `.gltf` in the same URL path
+3. If found, offer a one-click "flag + download it" link to grab the parent
+
+If no sibling is found, reload the page with the extension popup open so the request log captures both files.
+
 ### Network Inspector (advanced)
 
 When auto-detection misses a model — because it's served from a CDN with a generic URL, comes through as `application/octet-stream`, or is loaded via a custom protocol — switch to the **Network** tab.
