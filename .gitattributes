@@ -1,0 +1,3 @@
+*.wasm binary
+lib/** binary
+icons/*.png binary

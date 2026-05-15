@@ -138,6 +138,24 @@
     .btn-flag:hover { background: #374151; }
     .btn-identify { background: #1e3a5f; color: #93c5fd; }
     .btn-identify:hover { background: #234670; }
+    .btn-convert { background: #4c1d95; color: #ddd6fe; }
+    .btn-convert:hover { background: #5b21b6; }
+    .btn-convert:disabled { background: #2d2d2d; color: #666; cursor: not-allowed; }
+
+    .convert-options {
+      margin-top: 8px;
+      padding: 7px 9px;
+      background: #161616;
+      border: 1px solid #2d2d2d;
+      border-radius: 6px;
+      font-size: 11px;
+      color: #888;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .convert-options label { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+    .convert-options input[type="checkbox"] { accent-color: #667eea; }
 
     .identify-result {
       margin-top: 8px;
@@ -305,6 +323,11 @@
       <div class="spinner"></div>
       Scanning for 3D models...
     </div>
+    <div class="convert-options" id="convert-options">
+      <span style="color:#aaa;font-weight:600;">Convert (GLB → STL/3MF):</span>
+      <label><input type="checkbox" id="opt-rotate" checked> Y-up → Z-up rotation</label>
+      <label><input type="checkbox" id="opt-scale" checked> Scale ×1000 (m → mm)</label>
+    </div>
     <div id="models-container"></div>
   </div>
 
@@ -336,6 +359,8 @@
     <div id="req-table" class="req-table"></div>
   </div>
 
+  <script src="lib/draco_wasm_wrapper.js"></script>
+  <script src="converter.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

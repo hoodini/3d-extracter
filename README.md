@@ -170,6 +170,36 @@ When a website serves a `.gltf` (JSON) file, it usually references one or more `
 
 If no sibling is found, reload the page with the extension popup open so the request log captures both files.
 
+### Convert GLB → STL / 3MF (for Bambu Lab Studio)
+
+Every detected GLB shows two extra buttons next to Download: **→ STL** and **→ 3MF**. The extension does the conversion entirely in-browser — no upload, no external service. Output goes through Chrome's native "Save As" dialog.
+
+**What it does**
+
+- Parses the GLB header + JSON + BIN chunks
+- Walks the scene graph applying every node's transform (TRS or matrix) into world space
+- Decodes `KHR_draco_mesh_compression` primitives via a bundled Google DRACO WASM decoder (`lib/draco_decoder.wasm`)
+- Writes binary STL or 3MF (uncompressed ZIP containing the model XML, content-types, and rels)
+- Reports the final triangle count on the button
+
+**Default transform**
+
+Two toggles sit above the model list (both **on** by default):
+
+- **Y-up → Z-up rotation** — rotates +90° around X so the model stands upright in slicers. glTF uses Y-up; Bambu Studio uses Z-up.
+- **Scale ×1000 (m → mm)** — glTF distances are spec'd as meters; printer slicers work in millimeters.
+
+Turn either off if your GLB was already authored Z-up or in millimeters.
+
+**Limitations**
+
+- **Self-contained `.glb` only.** External buffers (`.gltf` referencing `.bin` files) aren't fetched automatically — convert in Blender first.
+- **Geometry only.** Materials, textures, vertex colors, morph targets, and skeletal animations are dropped — STL has no concept of materials anyway, and 3MF would need extension blocks beyond the core schema we emit.
+- **Triangle primitives only.** Lines, points, quads, and triangle-strips are skipped.
+- **No sparse accessors.**
+
+If conversion fails, the error message will tell you which feature was hit. You can typically work around it by importing the GLB into Blender and re-exporting.
+
 ### Network Inspector (advanced)
 
 When auto-detection misses a model — because it's served from a CDN with a generic URL, comes through as `application/octet-stream`, or is loaded via a custom protocol — switch to the **Network** tab.

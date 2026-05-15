@@ -151,6 +151,22 @@ function renderModels() {
     copyBtn.addEventListener('click', () => copyUrl(copyBtn, model.url));
     actions.appendChild(copyBtn);
 
+    if ((model.format || '').toLowerCase() === 'glb') {
+      const stlBtn = document.createElement('button');
+      stlBtn.className = 'btn btn-convert';
+      stlBtn.textContent = '→ STL';
+      stlBtn.title = 'Convert GLB to binary STL for Bambu Studio / any slicer.';
+      stlBtn.addEventListener('click', () => convertAndDownload(stlBtn, model, 'stl'));
+      actions.appendChild(stlBtn);
+
+      const mfBtn = document.createElement('button');
+      mfBtn.className = 'btn btn-convert';
+      mfBtn.textContent = '→ 3MF';
+      mfBtn.title = 'Convert GLB to 3MF (Bambu Studio native format).';
+      mfBtn.addEventListener('click', () => convertAndDownload(mfBtn, model, '3mf'));
+      actions.appendChild(mfBtn);
+    }
+
     item.appendChild(header);
     item.appendChild(urlDiv);
     item.appendChild(actions);
@@ -340,6 +356,49 @@ function downloadModel(btn, url, filename) {
       }, 1800);
     }
   );
+}
+
+async function convertAndDownload(btn, model, format) {
+  if (typeof GLBConverter === 'undefined') {
+    alert('Converter script not loaded. Reload the extension.');
+    return;
+  }
+
+  const original = btn.textContent;
+  btn.textContent = '⏳ ' + format.toUpperCase() + '…';
+  btn.disabled = true;
+
+  const opts = {
+    rotateYupToZup: document.getElementById('opt-rotate').checked,
+    scale: document.getElementById('opt-scale').checked ? 1000 : 1
+  };
+
+  try {
+    const { bytes, triangleCount } = await GLBConverter.convertGlb(model.url, format, opts);
+
+    const mime = format === 'stl'
+      ? 'application/vnd.ms-pki.stl'
+      : 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml';
+    const blob = new Blob([bytes], { type: mime });
+    const blobUrl = URL.createObjectURL(blob);
+    const filename = (model.filename || 'model.glb').replace(/\.[a-z0-9]+$/i, '') + '.' + format;
+
+    chrome.downloads.download({ url: blobUrl, filename, saveAs: true }, () => {
+      // Hold the blob URL alive long enough for the download to complete.
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      if (chrome.runtime.lastError) {
+        btn.textContent = '❌ ' + chrome.runtime.lastError.message.substring(0, 18);
+      } else {
+        btn.textContent = '✅ ' + triangleCount.toLocaleString() + '△';
+      }
+      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 3000);
+    });
+  } catch (e) {
+    console.error('Conversion failed:', e);
+    btn.textContent = '❌ Failed';
+    setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 3000);
+    alert('Conversion failed:\n\n' + e.message);
+  }
 }
 
 function identifyModel(btn, item, model) {
