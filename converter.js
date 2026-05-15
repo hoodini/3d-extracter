@@ -141,7 +141,10 @@
         ext.byteOffset || 0,
         (ext.byteOffset || 0) + ext.byteLength
       );
-      const decoded = await MeshoptDecoder.decodeGltfBuffer(
+      // Note: the sync `decodeGltfBuffer(target, count, size, source, mode, filter)`
+      // and async `decodeGltfBufferAsync(count, size, source, mode, filter)` have
+      // different signatures. Use the async one — it allocates the target itself.
+      const decoded = await MeshoptDecoder.decodeGltfBufferAsync(
         ext.count,
         ext.byteStride,
         source,
