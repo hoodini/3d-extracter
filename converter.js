@@ -34,46 +34,123 @@
   // ============================== accessors ================================
 
   const COMPONENT = {
-    5120: { ctor: Int8Array, size: 1, get: (dv, o) => dv.getInt8(o) },
-    5121: { ctor: Uint8Array, size: 1, get: (dv, o) => dv.getUint8(o) },
-    5122: { ctor: Int16Array, size: 2, get: (dv, o) => dv.getInt16(o, true) },
-    5123: { ctor: Uint16Array, size: 2, get: (dv, o) => dv.getUint16(o, true) },
-    5125: { ctor: Uint32Array, size: 4, get: (dv, o) => dv.getUint32(o, true) },
-    5126: { ctor: Float32Array, size: 4, get: (dv, o) => dv.getFloat32(o, true) }
+    5120: { ctor: Int8Array,    size: 1, norm: 127,   signed: true,  get: (dv, o) => dv.getInt8(o) },
+    5121: { ctor: Uint8Array,   size: 1, norm: 255,   signed: false, get: (dv, o) => dv.getUint8(o) },
+    5122: { ctor: Int16Array,   size: 2, norm: 32767, signed: true,  get: (dv, o) => dv.getInt16(o, true) },
+    5123: { ctor: Uint16Array,  size: 2, norm: 65535, signed: false, get: (dv, o) => dv.getUint16(o, true) },
+    5125: { ctor: Uint32Array,  size: 4, norm: 4294967295, signed: false, get: (dv, o) => dv.getUint32(o, true) },
+    5126: { ctor: Float32Array, size: 4, norm: 1,     signed: true,  get: (dv, o) => dv.getFloat32(o, true) }
   };
   const TYPE_COUNT = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4, MAT2: 4, MAT3: 9, MAT4: 16 };
 
-  function readAccessor(json, idx, binBytes) {
-    const acc = json.accessors[idx];
-    if (acc.bufferView === undefined) throw new Error('Sparse accessors not supported.');
-    const bv = json.bufferViews[acc.bufferView];
+  // Returns the raw byte view of a bufferView's logical contents — either the
+  // pre-decompressed buffer from the meshopt cache, or a slice of binBytes.
+  function getBufferViewBytes(json, bvIdx, binBytes, meshoptCache) {
+    if (meshoptCache && meshoptCache.has(bvIdx)) {
+      return meshoptCache.get(bvIdx);
+    }
+    const bv = json.bufferViews[bvIdx];
     const buf = json.buffers[bv.buffer];
     if (buf.uri) throw new Error('External buffer "' + buf.uri + '" not supported — use a self-contained .glb.');
     if (!binBytes) throw new Error('GLB has no binary chunk.');
+    return binBytes.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength);
+  }
 
+  function readAccessor(json, idx, binBytes, meshoptCache) {
+    const acc = json.accessors[idx];
+    if (acc.bufferView === undefined) throw new Error('Sparse accessors not supported.');
+    const bv = json.bufferViews[acc.bufferView];
+
+    // Get bytes (either pre-decoded meshopt buffer or raw GLB slice).
+    const viewBytes = getBufferViewBytes(json, acc.bufferView, binBytes, meshoptCache);
     const ci = COMPONENT[acc.componentType];
+    if (!ci) throw new Error('Unknown componentType: ' + acc.componentType);
     const comps = TYPE_COUNT[acc.type];
     const tight = comps * ci.size;
+    // For meshopt-decoded buffers, byteStride lives on the meshopt extension
+    // and matches `tight` in practice — but use the bv.byteStride hint when
+    // present and consistent.
     const stride = bv.byteStride || tight;
-    const start = (acc.byteOffset || 0) + (bv.byteOffset || 0);
+    const start = acc.byteOffset || 0;
 
-    if (stride === tight) {
-      const slice = binBytes.buffer.slice(
-        binBytes.byteOffset + start,
-        binBytes.byteOffset + start + acc.count * tight
+    // Read raw typed data.
+    let raw;
+    if (stride === tight && (viewBytes.byteOffset + start) % ci.size === 0) {
+      // Aligned + tight — fast path via typed-array view (with copy for safety).
+      const slice = viewBytes.buffer.slice(
+        viewBytes.byteOffset + start,
+        viewBytes.byteOffset + start + acc.count * tight
       );
-      return new ci.ctor(slice);
-    }
-
-    // Interleaved — walk element by element.
-    const out = new ci.ctor(acc.count * comps);
-    const dv = new DataView(binBytes.buffer, binBytes.byteOffset);
-    for (let i = 0; i < acc.count; i++) {
-      for (let c = 0; c < comps; c++) {
-        out[i * comps + c] = ci.get(dv, start + i * stride + c * ci.size);
+      raw = new ci.ctor(slice);
+    } else {
+      // Interleaved or unaligned — walk element-by-element.
+      raw = new ci.ctor(acc.count * comps);
+      const dv = new DataView(viewBytes.buffer, viewBytes.byteOffset);
+      for (let i = 0; i < acc.count; i++) {
+        for (let c = 0; c < comps; c++) {
+          raw[i * comps + c] = ci.get(dv, start + i * stride + c * ci.size);
+        }
       }
     }
-    return out;
+
+    // KHR_mesh_quantization (or any normalized integer accessor): dequantize.
+    // Normalized integers are mapped to [-1, 1] (signed) or [0, 1] (unsigned).
+    // The node transform compensates for the model-space scale.
+    if (acc.normalized && acc.componentType !== 5126 && acc.componentType !== 5125) {
+      const norm = ci.norm;
+      const out = new Float32Array(raw.length);
+      if (ci.signed) {
+        for (let i = 0; i < raw.length; i++) {
+          let v = raw[i] / norm;
+          if (v < -1) v = -1; // per glTF spec
+          out[i] = v;
+        }
+      } else {
+        for (let i = 0; i < raw.length; i++) out[i] = raw[i] / norm;
+      }
+      return out;
+    }
+
+    return raw;
+  }
+
+  // --- EXT_meshopt_compression ---------------------------------------------
+  // Pre-decode every meshopt-compressed bufferView into raw bytes.
+
+  async function decodeMeshoptBufferViews(json, binBytes) {
+    const bvs = json.bufferViews || [];
+    const cache = new Map();
+    let hasMeshopt = false;
+    for (const bv of bvs) {
+      if (bv.extensions && bv.extensions.EXT_meshopt_compression) { hasMeshopt = true; break; }
+    }
+    if (!hasMeshopt) return cache;
+
+    if (typeof MeshoptDecoder === 'undefined') {
+      throw new Error('Meshopt decoder not loaded. lib/meshopt_decoder.js must be present.');
+    }
+    await MeshoptDecoder.ready;
+
+    for (let i = 0; i < bvs.length; i++) {
+      const bv = bvs[i];
+      const ext = bv.extensions && bv.extensions.EXT_meshopt_compression;
+      if (!ext) continue;
+      if (!binBytes) throw new Error('GLB has no binary chunk for meshopt source.');
+
+      const source = binBytes.subarray(
+        ext.byteOffset || 0,
+        (ext.byteOffset || 0) + ext.byteLength
+      );
+      const decoded = await MeshoptDecoder.decodeGltfBuffer(
+        ext.count,
+        ext.byteStride,
+        source,
+        ext.mode,
+        ext.filter || 'NONE'
+      );
+      cache.set(i, decoded);
+    }
+    return cache;
   }
 
   // ============================== matrices =================================
@@ -138,11 +215,10 @@
     return dracoPromise;
   }
 
-  async function decodeDraco(primitive, json, binBytes) {
+  async function decodeDraco(primitive, json, binBytes, meshoptCache) {
     const ext = primitive.extensions.KHR_draco_mesh_compression;
-    const bv = json.bufferViews[ext.bufferView];
     if (!binBytes) throw new Error('DRACO requires the GLB binary chunk.');
-    const data = binBytes.subarray(bv.byteOffset || 0, (bv.byteOffset || 0) + bv.byteLength);
+    const data = getBufferViewBytes(json, ext.bufferView, binBytes, meshoptCache);
 
     const draco = await getDraco();
     const decoder = new draco.Decoder();
@@ -201,6 +277,9 @@
     const { json, binBytes } = glb;
     const triangles = [];
 
+    // Pre-decode any EXT_meshopt_compression bufferViews up front.
+    const meshoptCache = await decodeMeshoptBufferViews(json, binBytes);
+
     const scenes = json.scenes || [];
     const nodes  = json.nodes  || [];
     const meshes = json.meshes || [];
@@ -240,14 +319,14 @@
 
           let positions, indices = null;
           if (prim.extensions && prim.extensions.KHR_draco_mesh_compression) {
-            const dec = await decodeDraco(prim, json, binBytes);
+            const dec = await decodeDraco(prim, json, binBytes, meshoptCache);
             positions = dec.positions;
             indices = dec.indices;
           } else {
             const posIdx = prim.attributes && prim.attributes.POSITION;
             if (posIdx === undefined) continue;
-            positions = readAccessor(json, posIdx, binBytes);
-            if (prim.indices !== undefined) indices = readAccessor(json, prim.indices, binBytes);
+            positions = readAccessor(json, posIdx, binBytes, meshoptCache);
+            if (prim.indices !== undefined) indices = readAccessor(json, prim.indices, binBytes, meshoptCache);
           }
 
           const triCount = indices ? indices.length / 3 : positions.length / 9;
@@ -474,7 +553,14 @@
 
     // Surface obvious unsupported extensions early.
     const required = glb.json.extensionsRequired || [];
-    const supported = ['KHR_draco_mesh_compression', 'KHR_texture_basisu', 'KHR_materials_unlit', 'KHR_lights_punctual'];
+    const supported = [
+      'KHR_draco_mesh_compression',
+      'KHR_mesh_quantization',
+      'EXT_meshopt_compression',
+      'KHR_texture_basisu',
+      'KHR_materials_unlit',
+      'KHR_lights_punctual'
+    ];
     const unsupported = required.filter((e) => !supported.includes(e));
     if (unsupported.length) {
       throw new Error('GLB uses unsupported extensions: ' + unsupported.join(', '));
