@@ -368,13 +368,15 @@ async function convertAndDownload(btn, model, format) {
   btn.textContent = '⏳ ' + format.toUpperCase() + '…';
   btn.disabled = true;
 
+  const scaleValue = parseFloat(document.getElementById('opt-scale').value);
   const opts = {
     rotateYupToZup: document.getElementById('opt-rotate').checked,
-    scale: document.getElementById('opt-scale').checked ? 1000 : 1
+    scale: Number.isFinite(scaleValue) && scaleValue > 0 ? scaleValue : 1,
+    includeTexture: document.getElementById('opt-texture').checked
   };
 
   try {
-    const { bytes, triangleCount } = await GLBConverter.convertGlb(model.url, format, opts);
+    const { bytes, triangleCount, hasTexture } = await GLBConverter.convertGlb(model.url, format, opts);
 
     const mime = format === 'stl'
       ? 'application/vnd.ms-pki.stl'
@@ -389,7 +391,7 @@ async function convertAndDownload(btn, model, format) {
       if (chrome.runtime.lastError) {
         btn.textContent = '❌ ' + chrome.runtime.lastError.message.substring(0, 18);
       } else {
-        btn.textContent = '✅ ' + triangleCount.toLocaleString() + '△';
+        btn.textContent = '✅ ' + triangleCount.toLocaleString() + '△' + (hasTexture ? ' +tex' : '');
       }
       setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 3000);
     });

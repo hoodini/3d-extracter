@@ -276,12 +276,9 @@
 
   // ========================== triangle extraction ==========================
 
-  async function extractTriangles(glb, options) {
+  async function extractTriangles(glb, options, meshoptCache) {
     const { json, binBytes } = glb;
     const triangles = [];
-
-    // Pre-decode any EXT_meshopt_compression bufferViews up front.
-    const meshoptCache = await decodeMeshoptBufferViews(json, binBytes);
 
     const scenes = json.scenes || [];
     const nodes  = json.nodes  || [];
@@ -320,16 +317,19 @@
           const mode = prim.mode == null ? 4 : prim.mode;
           if (mode !== 4) continue; // only TRIANGLES
 
-          let positions, indices = null;
+          let positions, indices = null, uvs = null;
           if (prim.extensions && prim.extensions.KHR_draco_mesh_compression) {
             const dec = await decodeDraco(prim, json, binBytes, meshoptCache);
             positions = dec.positions;
             indices = dec.indices;
+            // DRACO branch doesn't extract UVs (Tripo uses meshopt, not DRACO)
           } else {
             const posIdx = prim.attributes && prim.attributes.POSITION;
             if (posIdx === undefined) continue;
             positions = readAccessor(json, posIdx, binBytes, meshoptCache);
             if (prim.indices !== undefined) indices = readAccessor(json, prim.indices, binBytes, meshoptCache);
+            const uvIdx = prim.attributes && prim.attributes.TEXCOORD_0;
+            if (uvIdx !== undefined) uvs = readAccessor(json, uvIdx, binBytes, meshoptCache);
           }
 
           const triCount = indices ? indices.length / 3 : positions.length / 9;
@@ -337,11 +337,17 @@
             const i0 = indices ? indices[i*3]     : i*3;
             const i1 = indices ? indices[i*3 + 1] : i*3 + 1;
             const i2 = indices ? indices[i*3 + 2] : i*3 + 2;
-            triangles.push({
+            const t = {
               a: transformPoint(world, [positions[i0*3], positions[i0*3+1], positions[i0*3+2]]),
               b: transformPoint(world, [positions[i1*3], positions[i1*3+1], positions[i1*3+2]]),
               c: transformPoint(world, [positions[i2*3], positions[i2*3+1], positions[i2*3+2]])
-            });
+            };
+            if (uvs) {
+              t.uvA = [uvs[i0*2], uvs[i0*2+1]];
+              t.uvB = [uvs[i1*2], uvs[i1*2+1]];
+              t.uvC = [uvs[i2*2], uvs[i2*2+1]];
+            }
+            triangles.push(t);
           }
         }
       }
@@ -413,18 +419,41 @@
     return (c ^ 0xFFFFFFFF) >>> 0;
   }
 
-  function buildZip(files) {
+  async function deflateRaw(bytes) {
+    // Browser-native raw DEFLATE. Available in Chrome since v80.
+    const cs = new CompressionStream('deflate-raw');
+    const w = cs.writable.getWriter();
+    w.write(bytes); w.close();
+    const buf = await new Response(cs.readable).arrayBuffer();
+    return new Uint8Array(buf);
+  }
+
+  // files = [{ name, data, compress?: boolean }]
+  // Compressed entries use DEFLATE (method 8); others use STORE (method 0).
+  async function buildZip(files) {
     const enc = new TextEncoder();
     const records = [];
-    let localSize = 0;
-    let centralSize = 0;
-
     for (const f of files) {
       const nameBytes = enc.encode(f.name);
       const crc = crc32(f.data);
-      records.push({ nameBytes, data: f.data, crc, offset: localSize });
-      localSize += 30 + nameBytes.length + f.data.length;
-      centralSize += 46 + nameBytes.length;
+      const compressed = f.compress ? await deflateRaw(f.data) : f.data;
+      const method = f.compress ? 8 : 0;
+      records.push({
+        nameBytes,
+        rawData: compressed,
+        crc,
+        method,
+        uncompressedSize: f.data.length,
+        compressedSize: compressed.length
+      });
+    }
+
+    let localSize = 0;
+    let centralSize = 0;
+    for (const r of records) {
+      r.offset = localSize;
+      localSize += 30 + r.nameBytes.length + r.compressedSize;
+      centralSize += 46 + r.nameBytes.length;
     }
 
     const out = new Uint8Array(localSize + centralSize + 22);
@@ -435,17 +464,17 @@
       dv.setUint32(p,    0x04034b50, true);
       dv.setUint16(p+4,  20, true);
       dv.setUint16(p+6,  0, true);
-      dv.setUint16(p+8,  0, true);            // store (no compression)
+      dv.setUint16(p+8,  r.method, true);
       dv.setUint16(p+10, 0, true);
-      dv.setUint16(p+12, 0x21, true);         // 1980-01-01
+      dv.setUint16(p+12, 0x21, true);
       dv.setUint32(p+14, r.crc, true);
-      dv.setUint32(p+18, r.data.length, true);
-      dv.setUint32(p+22, r.data.length, true);
+      dv.setUint32(p+18, r.compressedSize, true);
+      dv.setUint32(p+22, r.uncompressedSize, true);
       dv.setUint16(p+26, r.nameBytes.length, true);
       dv.setUint16(p+28, 0, true);
       p += 30;
       out.set(r.nameBytes, p); p += r.nameBytes.length;
-      out.set(r.data, p);      p += r.data.length;
+      out.set(r.rawData, p);    p += r.compressedSize;
     }
 
     const centralStart = p;
@@ -454,12 +483,12 @@
       dv.setUint16(p+4,  20, true);
       dv.setUint16(p+6,  20, true);
       dv.setUint16(p+8,  0, true);
-      dv.setUint16(p+10, 0, true);
+      dv.setUint16(p+10, r.method, true);
       dv.setUint16(p+12, 0, true);
       dv.setUint16(p+14, 0x21, true);
       dv.setUint32(p+16, r.crc, true);
-      dv.setUint32(p+20, r.data.length, true);
-      dv.setUint32(p+24, r.data.length, true);
+      dv.setUint32(p+20, r.compressedSize, true);
+      dv.setUint32(p+24, r.uncompressedSize, true);
       dv.setUint16(p+28, r.nameBytes.length, true);
       dv.setUint16(p+30, 0, true);
       dv.setUint16(p+32, 0, true);
@@ -484,50 +513,93 @@
     return out;
   }
 
-  function exportThreeMF(triangles) {
-    // Dedup vertices by rounded coords.
+  // texture: { bytes, mimeType, extension } | null
+  async function exportThreeMF(triangles, texture) {
+    const hasUVs = texture && triangles.length > 0 && triangles[0].uvA;
+
+    // Vertex dedup: key by (position) when no UVs, (position+uv) when textured.
     const map = new Map();
-    const vertices = [];
-    function vidx(v) {
-      const k = v[0].toFixed(6) + ',' + v[1].toFixed(6) + ',' + v[2].toFixed(6);
+    const vertices = []; // [[x,y,z], ...]
+    const uvs = [];      // parallel to vertices when hasUVs
+    function vidx(pos, uv) {
+      let k;
+      if (uv) {
+        k = pos[0].toFixed(5) + ',' + pos[1].toFixed(5) + ',' + pos[2].toFixed(5) +
+            '|' + uv[0].toFixed(5) + ',' + uv[1].toFixed(5);
+      } else {
+        k = pos[0].toFixed(6) + ',' + pos[1].toFixed(6) + ',' + pos[2].toFixed(6);
+      }
       let i = map.get(k);
       if (i === undefined) {
         i = vertices.length;
-        vertices.push(v);
+        vertices.push(pos);
+        if (uv) uvs.push(uv);
         map.set(k, i);
       }
       return i;
     }
+
     const tris = new Array(triangles.length);
     for (let i = 0; i < triangles.length; i++) {
       const t = triangles[i];
-      tris[i] = [vidx(t.a), vidx(t.b), vidx(t.c)];
+      if (hasUVs) tris[i] = [vidx(t.a, t.uvA), vidx(t.b, t.uvB), vidx(t.c, t.uvC)];
+      else tris[i] = [vidx(t.a), vidx(t.b), vidx(t.c)];
     }
 
-    const chunks = [
-      '<?xml version="1.0" encoding="UTF-8"?>\n',
-      '<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n',
-      '  <resources>\n',
-      '    <object id="1" type="model">\n',
-      '      <mesh>\n',
-      '        <vertices>\n'
-    ];
+    const mNs = ' xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02"';
+    const requiredAttr = hasUVs ? ' requiredextensions="m"' : '';
+
+    const chunks = [];
+    chunks.push('<?xml version="1.0" encoding="UTF-8"?>\n');
+    chunks.push('<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"');
+    chunks.push(hasUVs ? (mNs + requiredAttr) : '');
+    chunks.push('>\n  <resources>\n');
+
+    let texturePath = null;
+    if (hasUVs) {
+      texturePath = '/3D/Textures/baseColor.' + texture.extension;
+      chunks.push('    <m:texture2d id="1" path="' + texturePath + '" contenttype="' + texture.mimeType + '" tilestyleu="wrap" tilestylev="wrap"/>\n');
+      chunks.push('    <m:texture2dgroup id="2" texid="1">\n');
+      for (const uv of uvs) {
+        // glTF V axis points down; 3MF V points up — flip V.
+        chunks.push('      <m:tex2coord u="' + uv[0].toFixed(6) + '" v="' + (1 - uv[1]).toFixed(6) + '"/>\n');
+      }
+      chunks.push('    </m:texture2dgroup>\n');
+      chunks.push('    <object id="3" type="model" pid="2" pindex="0">\n');
+    } else {
+      chunks.push('    <object id="1" type="model">\n');
+    }
+
+    chunks.push('      <mesh>\n        <vertices>\n');
     for (const v of vertices) {
       chunks.push('          <vertex x="' + v[0].toFixed(6) + '" y="' + v[1].toFixed(6) + '" z="' + v[2].toFixed(6) + '"/>\n');
     }
     chunks.push('        </vertices>\n        <triangles>\n');
-    for (const t of tris) {
-      chunks.push('          <triangle v1="' + t[0] + '" v2="' + t[1] + '" v3="' + t[2] + '"/>\n');
+    if (hasUVs) {
+      for (const t of tris) {
+        chunks.push('          <triangle v1="' + t[0] + '" v2="' + t[1] + '" v3="' + t[2] +
+                    '" p1="' + t[0] + '" p2="' + t[1] + '" p3="' + t[2] + '"/>\n');
+      }
+    } else {
+      for (const t of tris) {
+        chunks.push('          <triangle v1="' + t[0] + '" v2="' + t[1] + '" v3="' + t[2] + '"/>\n');
+      }
     }
-    chunks.push('        </triangles>\n      </mesh>\n    </object>\n  </resources>\n  <build>\n    <item objectid="1"/>\n  </build>\n</model>\n');
+    chunks.push('        </triangles>\n      </mesh>\n    </object>\n  </resources>\n  <build>\n');
+    chunks.push('    <item objectid="' + (hasUVs ? 3 : 1) + '"/>\n  </build>\n</model>\n');
     const modelXml = chunks.join('');
 
-    const contentTypes =
-      '<?xml version="1.0" encoding="UTF-8"?>\n' +
-      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n' +
-      '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n' +
-      '  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n' +
-      '</Types>\n';
+    const contentTypesParts = [
+      '<?xml version="1.0" encoding="UTF-8"?>\n',
+      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">\n',
+      '  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>\n',
+      '  <Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>\n'
+    ];
+    if (hasUVs) {
+      contentTypesParts.push('  <Default Extension="' + texture.extension + '" ContentType="' + texture.mimeType + '"/>\n');
+    }
+    contentTypesParts.push('</Types>\n');
+    const contentTypes = contentTypesParts.join('');
 
     const rels =
       '<?xml version="1.0" encoding="UTF-8"?>\n' +
@@ -536,14 +608,70 @@
       '</Relationships>\n';
 
     const enc = new TextEncoder();
-    return buildZip([
-      { name: '[Content_Types].xml', data: enc.encode(contentTypes) },
-      { name: '_rels/.rels',          data: enc.encode(rels) },
-      { name: '3D/3dmodel.model',     data: enc.encode(modelXml) }
-    ]);
+    const files = [
+      { name: '[Content_Types].xml', data: enc.encode(contentTypes),  compress: true },
+      { name: '_rels/.rels',          data: enc.encode(rels),          compress: true },
+      { name: '3D/3dmodel.model',     data: enc.encode(modelXml),      compress: true }
+    ];
+    if (hasUVs) {
+      // Texture file path matches what we wrote in the model XML (without leading slash for ZIP entry).
+      files.push({ name: '3D/Textures/baseColor.' + texture.extension, data: texture.bytes, compress: false });
+    }
+    return buildZip(files);
   }
 
   // ============================== top-level ================================
+
+  // Extract the first material's baseColor texture image. Returns
+  // { bytes, mimeType, extension } or null. Image is decoded by the
+  // browser later; we just pass bytes through.
+  async function extractBaseColorTexture(glb, meshoptCache) {
+    const { json, binBytes } = glb;
+    const materials = json.materials || [];
+    if (!materials.length) return null;
+
+    // Find first material with a baseColorTexture (or first material with extensions like KHR_materials_pbrSpecularGlossiness).
+    let texIdx;
+    for (const mat of materials) {
+      const pbr = mat.pbrMetallicRoughness;
+      if (pbr && pbr.baseColorTexture && pbr.baseColorTexture.index !== undefined) {
+        texIdx = pbr.baseColorTexture.index;
+        break;
+      }
+    }
+    if (texIdx === undefined) return null;
+
+    const textures = json.textures || [];
+    const tex = textures[texIdx];
+    if (!tex || tex.source === undefined) return null;
+
+    const image = (json.images || [])[tex.source];
+    if (!image) return null;
+
+    let bytes;
+    let mimeType = image.mimeType;
+    if (image.bufferView !== undefined) {
+      bytes = getBufferViewBytes(json, image.bufferView, binBytes, meshoptCache);
+    } else if (image.uri && image.uri.startsWith('data:')) {
+      // Data URI — parse it.
+      const [meta, b64] = image.uri.split(',');
+      mimeType = mimeType || (meta.match(/data:([^;]+)/) || [])[1] || 'image/png';
+      const binStr = atob(b64);
+      bytes = new Uint8Array(binStr.length);
+      for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+    } else {
+      return null; // external image URI not supported
+    }
+
+    if (!mimeType) {
+      // Sniff from magic bytes.
+      if (bytes[0] === 0x89 && bytes[1] === 0x50) mimeType = 'image/png';
+      else if (bytes[0] === 0xFF && bytes[1] === 0xD8) mimeType = 'image/jpeg';
+      else mimeType = 'image/png';
+    }
+    const extension = mimeType === 'image/jpeg' ? 'jpg' : 'png';
+    return { bytes: new Uint8Array(bytes), mimeType, extension };
+  }
 
   async function convertGlb(url, format, options) {
     const opts = Object.assign({ rotateYupToZup: true, scale: 1000 }, options || {});
@@ -569,15 +697,28 @@
       throw new Error('GLB uses unsupported extensions: ' + unsupported.join(', '));
     }
 
-    const triangles = await extractTriangles(glb, opts);
+    // Pre-decode meshopt bufferViews once; both extractors share the cache.
+    const meshoptCache = await decodeMeshoptBufferViews(glb.json, glb.binBytes);
+
+    const triangles = await extractTriangles(glb, opts, meshoptCache);
     if (triangles.length === 0) throw new Error('No triangles extracted (empty model or unsupported primitive types).');
+
+    let texture = null;
+    if (format === '3mf' && opts.includeTexture !== false) {
+      try {
+        texture = await extractBaseColorTexture(glb, meshoptCache);
+      } catch (e) {
+        // Non-fatal: fall back to plain 3MF.
+        console.warn('Texture extraction failed, falling back to plain 3MF:', e);
+      }
+    }
 
     let bytes;
     if (format === 'stl') bytes = exportSTL(triangles);
-    else if (format === '3mf') bytes = exportThreeMF(triangles);
+    else if (format === '3mf') bytes = await exportThreeMF(triangles, texture);
     else throw new Error('Unsupported target format: ' + format);
 
-    return { bytes, triangleCount: triangles.length };
+    return { bytes, triangleCount: triangles.length, hasTexture: !!texture };
   }
 
   global.GLBConverter = { convertGlb, parseGLB, extractTriangles, exportSTL, exportThreeMF };

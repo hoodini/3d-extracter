@@ -156,6 +156,17 @@
     }
     .convert-options label { display: flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
     .convert-options input[type="checkbox"] { accent-color: #667eea; }
+    .convert-options input[type="number"] {
+      width: 60px;
+      padding: 3px 6px;
+      background: #2d2d2d;
+      border: 1px solid #3d3d3d;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-size: 11px;
+      outline: none;
+    }
+    .convert-options input[type="number"]:focus { border-color: #667eea; }
 
     .identify-result {
       margin-top: 8px;
@@ -324,9 +335,10 @@
       Scanning for 3D models...
     </div>
     <div class="convert-options" id="convert-options">
-      <span style="color:#aaa;font-weight:600;">Convert (GLB → STL/3MF):</span>
-      <label><input type="checkbox" id="opt-rotate" checked> Y-up → Z-up rotation</label>
-      <label><input type="checkbox" id="opt-scale" checked> Scale ×1000 (m → mm)</label>
+      <span style="color:#aaa;font-weight:600;">Convert:</span>
+      <label><input type="checkbox" id="opt-rotate" checked> Y-up → Z-up</label>
+      <label>Scale × <input type="number" id="opt-scale" value="100" min="0.001" step="any"></label>
+      <label><input type="checkbox" id="opt-texture" checked> Texture (3MF)</label>
     </div>
     <div id="models-container"></div>
   </div>
