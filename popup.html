@@ -5,15 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>3D Model Extractor</title>
   <style>
-    * {
-      margin: 0;
-      padding: 0;
-      box-sizing: border-box;
-    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 400px;
-      min-height: 300px;
+      width: 520px;
+      min-height: 380px;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
       background: #1e1e1e;
       color: #e0e0e0;
@@ -21,54 +17,59 @@
 
     .header {
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 20px;
+      padding: 16px 20px;
       text-align: center;
     }
 
-    .header h1 {
-      font-size: 18px;
-      font-weight: 600;
-      color: white;
-      margin-bottom: 5px;
-    }
+    .header h1 { font-size: 18px; font-weight: 600; color: white; margin-bottom: 4px; }
+    .header p { font-size: 11px; color: rgba(255,255,255,0.85); }
 
-    .header p {
+    .tabs {
+      display: flex;
+      background: #161616;
+      border-bottom: 1px solid #2d2d2d;
+    }
+    .tab {
+      flex: 1;
+      padding: 12px 8px;
+      background: transparent;
+      border: none;
+      color: #888;
       font-size: 12px;
-      color: rgba(255, 255, 255, 0.8);
+      font-weight: 600;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
     }
+    .tab:hover { color: #e0e0e0; }
+    .tab.active { color: #fff; border-bottom-color: #667eea; }
+    .tab .count {
+      display: inline-block;
+      background: #3d3d3d;
+      color: #e0e0e0;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      margin-left: 4px;
+    }
+    .tab.active .count { background: #667eea; color: white; }
 
-    .content {
-      padding: 15px;
-    }
+    .panel { display: none; padding: 14px; }
+    .panel.active { display: block; }
 
     .status {
-      padding: 12px;
+      padding: 10px 12px;
       background: #2d2d2d;
       border-radius: 8px;
-      margin-bottom: 15px;
+      margin-bottom: 12px;
       text-align: center;
-      font-size: 13px;
+      font-size: 12px;
     }
+    .status.success { background: #1a472a; color: #4ade80; }
+    .status.info { background: #1e3a5f; color: #60a5fa; }
+    .status.empty { background: #3d2d1f; color: #fbbf24; }
 
-    .status.success {
-      background: #1a472a;
-      color: #4ade80;
-    }
-
-    .status.info {
-      background: #1e3a5f;
-      color: #60a5fa;
-    }
-
-    .status.empty {
-      background: #3d2d1f;
-      color: #fbbf24;
-    }
-
-    .models-list {
-      max-height: 400px;
-      overflow-y: auto;
-    }
+    .models-list { max-height: 440px; overflow-y: auto; }
 
     .model-item {
       background: #2d2d2d;
@@ -78,80 +79,67 @@
       border: 1px solid #3d3d3d;
       transition: all 0.2s;
     }
-
-    .model-item:hover {
-      border-color: #667eea;
-      background: #333;
-    }
+    .model-item:hover { border-color: #667eea; background: #333; }
 
     .model-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 8px;
-    }
-
-    .model-filename {
-      font-size: 13px;
-      font-weight: 600;
-      color: #fff;
-      word-break: break-word;
-      flex: 1;
-      margin-right: 10px;
-    }
-
-    .model-size {
-      font-size: 11px;
-      color: #888;
-      white-space: nowrap;
-    }
-
-    .model-url {
-      font-size: 11px;
-      color: #888;
-      word-break: break-all;
-      margin-bottom: 10px;
-      line-height: 1.4;
-    }
-
-    .model-actions {
-      display: flex;
+      margin-bottom: 6px;
       gap: 8px;
     }
+    .model-filename { font-size: 13px; font-weight: 600; color: #fff; word-break: break-word; flex: 1; }
+    .model-size { font-size: 11px; color: #888; white-space: nowrap; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-right: 6px;
+    }
+    .badge.fmt { background: #667eea; color: white; }
+    .badge.fmt-glb { background: #667eea; }
+    .badge.fmt-gltf { background: #5a67d8; }
+    .badge.fmt-fbx { background: #d97706; }
+    .badge.fmt-obj { background: #059669; }
+    .badge.fmt-usdz, .badge.fmt-usd, .badge.fmt-usdc { background: #dc2626; }
+    .badge.fmt-stl { background: #7c3aed; }
+    .badge.fmt-3mf, .badge.fmt-m3f { background: #db2777; }
+    .badge.fmt-ply { background: #0891b2; }
+    .badge.fmt-dae { background: #ea580c; }
+    .badge.fmt-unknown { background: #525252; }
+
+    .badge.conf-low { background: #92400e; color: #fde68a; }
+    .badge.conf-manual { background: #1f2937; color: #93c5fd; }
+    .badge.conf-dom { background: #1f2937; color: #a7f3d0; }
+
+    .model-url { font-size: 11px; color: #888; word-break: break-all; margin-bottom: 10px; line-height: 1.4; }
+    .model-actions { display: flex; gap: 8px; }
 
     .btn {
       flex: 1;
-      padding: 8px 12px;
+      padding: 7px 10px;
       border: none;
       border-radius: 6px;
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 600;
       cursor: pointer;
       transition: all 0.2s;
     }
-
-    .btn-download {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-    }
-
-    .btn-download:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-    }
-
-    .btn-copy {
-      background: #3d3d3d;
-      color: #e0e0e0;
-    }
-
-    .btn-copy:hover {
-      background: #4d4d4d;
-    }
+    .btn-download { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+    .btn-download:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(102,126,234,0.4); }
+    .btn-copy { background: #3d3d3d; color: #e0e0e0; }
+    .btn-copy:hover { background: #4d4d4d; }
+    .btn-flag { background: #1f2937; color: #93c5fd; border: 1px solid #374151; }
+    .btn-flag:hover { background: #374151; }
 
     .btn-clear {
       width: 100%;
-      padding: 10px;
+      padding: 9px;
       background: #3d2d1f;
       color: #fbbf24;
       border: none;
@@ -161,82 +149,172 @@
       cursor: pointer;
       margin-top: 10px;
     }
+    .btn-clear:hover { background: #4d3d2f; }
 
-    .btn-clear:hover {
-      background: #4d3d2f;
+    .empty-state { text-align: center; padding: 40px 20px; }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; opacity: 0.5; }
+    .empty-text { font-size: 13px; color: #888; line-height: 1.6; }
+
+    .filter-bar {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .filter-input {
+      flex: 1;
+      min-width: 140px;
+      padding: 7px 10px;
+      background: #2d2d2d;
+      border: 1px solid #3d3d3d;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 12px;
+      outline: none;
+    }
+    .filter-input:focus { border-color: #667eea; }
+    .filter-select {
+      padding: 7px 10px;
+      background: #2d2d2d;
+      border: 1px solid #3d3d3d;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
     }
 
-    .empty-state {
-      text-align: center;
-      padding: 40px 20px;
+    .req-table {
+      max-height: 420px;
+      overflow-y: auto;
+      background: #161616;
+      border-radius: 6px;
+      border: 1px solid #2d2d2d;
     }
-
-    .empty-icon {
-      font-size: 48px;
-      margin-bottom: 15px;
-      opacity: 0.5;
+    .req-row {
+      display: grid;
+      grid-template-columns: 60px 1fr 70px 60px;
+      gap: 8px;
+      padding: 8px 10px;
+      border-bottom: 1px solid #242424;
+      font-size: 11px;
+      cursor: pointer;
+      transition: background 0.1s;
     }
+    .req-row:last-child { border-bottom: none; }
+    .req-row:hover { background: #232323; }
+    .req-row.flagged { background: rgba(102,126,234,0.12); }
+    .req-row.flagged:hover { background: rgba(102,126,234,0.2); }
 
-    .empty-text {
-      font-size: 14px;
-      color: #888;
-      line-height: 1.6;
-    }
+    .req-type { color: #888; text-transform: uppercase; font-size: 10px; font-weight: 600; }
+    .req-url { color: #e0e0e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .req-size, .req-status { color: #888; text-align: right; }
+    .req-status.s-200 { color: #4ade80; }
+    .req-status.s-3 { color: #60a5fa; }
+    .req-status.s-4, .req-status.s-5 { color: #f87171; }
 
-    ::-webkit-scrollbar {
-      width: 8px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: #1e1e1e;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: #4d4d4d;
+    .req-detail {
+      grid-column: 1 / -1;
+      padding: 10px;
+      background: #0c0c0c;
       border-radius: 4px;
+      margin-top: 6px;
+      display: none;
+      font-size: 11px;
+      line-height: 1.5;
     }
+    .req-row.expanded { display: block; }
+    .req-row.expanded .req-detail { display: block; }
+    .req-row.expanded .req-grid { display: grid; grid-template-columns: 60px 1fr 70px 60px; gap: 8px; }
+    .req-row .req-grid { display: contents; }
 
-    ::-webkit-scrollbar-thumb:hover {
-      background: #5d5d5d;
-    }
+    .req-detail .kv { display: flex; gap: 8px; margin-bottom: 4px; word-break: break-all; }
+    .req-detail .kv .k { color: #888; flex: 0 0 90px; }
+    .req-detail .kv .v { color: #e0e0e0; flex: 1; }
+    .req-actions { margin-top: 8px; display: flex; gap: 6px; }
 
-    .loading {
-      text-align: center;
-      padding: 20px;
+    .toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 11px;
       color: #888;
     }
+    .toolbar .count-text { flex: 1; }
+    .toolbar .btn-mini {
+      padding: 5px 9px;
+      background: #2d2d2d;
+      color: #e0e0e0;
+      border: 1px solid #3d3d3d;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .toolbar .btn-mini:hover { background: #3d3d3d; }
+
+    ::-webkit-scrollbar { width: 7px; height: 7px; }
+    ::-webkit-scrollbar-track { background: #1e1e1e; }
+    ::-webkit-scrollbar-thumb { background: #4d4d4d; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #5d5d5d; }
 
     .spinner {
       border: 3px solid #3d3d3d;
       border-top: 3px solid #667eea;
       border-radius: 50%;
-      width: 30px;
-      height: 30px;
+      width: 28px;
+      height: 28px;
       animation: spin 1s linear infinite;
       margin: 0 auto 10px;
     }
-
-    @keyframes spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
+    @keyframes spin { 0% { transform: rotate(0); } 100% { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div class="header">
     <h1>🎨 3D Model Extractor</h1>
-    <p>Find and download GLB/GLTF files</p>
+    <p>GLB · GLTF · M3F · 3MF · FBX · OBJ · USDZ · STL · PLY · DAE</p>
   </div>
 
-  <div class="content">
-    <div id="status" class="status info">
-      <div class="loading">
-        <div class="spinner"></div>
-        Scanning for 3D models...
-      </div>
-    </div>
+  <div class="tabs">
+    <button class="tab active" data-tab="models">Models <span id="models-count" class="count">0</span></button>
+    <button class="tab" data-tab="network">Network <span id="network-count" class="count">0</span></button>
+  </div>
 
+  <div id="panel-models" class="panel active">
+    <div id="models-status" class="status info">
+      <div class="spinner"></div>
+      Scanning for 3D models...
+    </div>
     <div id="models-container"></div>
+  </div>
+
+  <div id="panel-network" class="panel">
+    <div class="filter-bar">
+      <input id="filter-input" class="filter-input" placeholder="Filter URL or content-type..." />
+      <select id="filter-type" class="filter-select">
+        <option value="">All types</option>
+        <option value="xmlhttprequest">XHR</option>
+        <option value="fetch">Fetch</option>
+        <option value="script">Script</option>
+        <option value="image">Image</option>
+        <option value="media">Media</option>
+        <option value="stylesheet">CSS</option>
+        <option value="other">Other</option>
+      </select>
+      <select id="filter-min-size" class="filter-select">
+        <option value="0">Any size</option>
+        <option value="10000">≥ 10 KB</option>
+        <option value="100000">≥ 100 KB</option>
+        <option value="1000000">≥ 1 MB</option>
+      </select>
+    </div>
+    <div class="toolbar">
+      <span id="req-count-text" class="count-text">0 requests</span>
+      <button id="only-flagged" class="btn-mini">Flagged only</button>
+      <button id="clear-requests" class="btn-mini">Clear log</button>
+    </div>
+    <div id="req-table" class="req-table"></div>
   </div>
 
   <script src="popup.js"></script>

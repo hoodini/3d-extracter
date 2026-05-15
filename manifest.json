@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "3D Model Extractor",
-  "version": "1.0.0",
-  "description": "Extract and download GLB/GLTF 3D model files from web pages",
+  "version": "1.1.0",
+  "description": "Extract and download GLB, GLTF, M3F, 3MF, FBX, OBJ, USDZ, STL, PLY, and DAE 3D models from any web page — with full network traffic inspector.",
   "permissions": [
     "webRequest",
     "downloads",
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -8,7 +8,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![JavaScript](https://img.shields.io/badge/JavaScript-F7DF1E?style=for-the-badge&logo=javascript&logoColor=black)](https://developer.mozilla.org/en-US/docs/Web/JavaScript)
 
-A powerful Chrome extension that automatically detects, intercepts, and downloads GLB/GLTF 3D model files from any website. Perfect for designers, 3D artists, and developers working with web-based 3D content.
+A powerful Chrome extension that automatically detects, intercepts, and downloads 3D model files in **11 formats** (GLB, GLTF, M3F, 3MF, FBX, OBJ, USDZ, STL, PLY, DAE, and more) from any website. Ships with a built-in **Network Inspector** so you can browse every request the page makes and flag anything as a model — perfect for designers, 3D artists, and developers working with web-based 3D content.
 
 [Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [How It Works](#-how-it-works) • [Contributing](#-contributing)
 
@@ -20,15 +20,17 @@ A powerful Chrome extension that automatically detects, intercepts, and download
 
 Ever visited a website with amazing 3D models but couldn't download them because the download button was broken or didn't exist? This extension solves that problem.
 
-**3D Model Extractor** monitors all network traffic and page content to automatically detect GLB and GLTF files, then provides a clean interface to download them with a single click. No more digging through DevTools or manually copying URLs.
+**3D Model Extractor** monitors all network traffic and page content to automatically detect 3D model files across every common format, then provides a clean interface to download them with a single click. When auto-detection misses something, the Network Inspector lets you flag any request — even ones served with non-standard URLs or content types — as a model and download it directly. No more digging through DevTools or manually copying URLs.
 
 ### Why Use This Extension?
 
 - 🔍 **Automatic Detection** - Finds models without manual searching
+- 🧬 **Multi-Format Support** - GLB, GLTF, M3F, 3MF, FBX, OBJ, USDZ/USDC, STL, PLY, DAE, 3DS, X3D, VRML
+- 🕵️ **Network Inspector** - Browse, filter, and flag every network request the page makes
 - ⚡ **Real-time Monitoring** - Captures models as they load
 - 💾 **One-Click Download** - Save files instantly with native browser dialog
 - 🔒 **Privacy-First** - All processing happens locally in your browser
-- 🎯 **Smart Filtering** - Only shows actual 3D model files
+- 🎯 **Smart Filtering** - Format badges, confidence levels, size/type filters
 - 📋 **URL Copying** - Grab model URLs for external tools
 
 ---
@@ -39,13 +41,17 @@ Ever visited a website with amazing 3D models but couldn't download them because
 
 | Feature | Description |
 |---------|-------------|
-| **Network Interception** | Monitors all HTTP requests to detect GLB/GLTF files by extension, content-type, and URL patterns |
-| **DOM Scanning** | Searches page HTML for model URLs in links, data attributes, scripts, and canvas elements |
+| **Multi-Format Detection** | Detects 11+ formats by extension (`.glb .gltf .m3f .3mf .fbx .obj .usdz .stl .ply .dae` and more) and by content-type sniffing |
+| **Network Interception** | Monitors every HTTP request, logs URL, method, type, status, content-type, and size per tab |
+| **Network Inspector Tab** | Built-in panel to browse all requests, filter by URL/type/size, and manually flag anything as a model |
+| **Heuristic Scoring** | Flags suspicious binary payloads with model-ish URLs (`/model/`, `/mesh/`, `/asset/`) even without a known extension |
+| **DOM Scanning** | Searches page HTML for model URLs in links, data attributes, scripts, `<model-viewer>`, A-Frame, stylesheets |
+| **Format Badges** | Each detected model is tagged with its format and confidence level (high / low / manual / dom) |
 | **Badge Counter** | Shows number of detected models directly on the extension icon |
-| **Auto-Refresh** | Updates detected models list every 2 seconds automatically |
+| **Auto-Refresh** | Live updates every 1.5 seconds while the popup is open |
 | **Download Manager** | Uses Chrome's native download API with "Save As" dialog for full control |
 | **URL Clipboard** | Copy model URLs to clipboard for use with external download managers or tools |
-| **Tab Isolation** | Each browser tab maintains its own separate list of detected models |
+| **Tab Isolation** | Each browser tab maintains its own separate list of detected models and request log |
 
 ### User Interface
 
@@ -124,14 +130,25 @@ inkscape icons/icon.svg --export-filename=icons/icon128.png -w 128 -h 128
    - The extension monitors network traffic automatically
    - A badge appears on the extension icon showing the count
 
-3. **Click the extension icon**
-   - See all detected GLB/GLTF files
-   - View filename and file size for each
+3. **Click the extension icon → Models tab**
+   - See every detected model with format badge and size
+   - Each entry shows confidence: `high` (URL or content-type match), `low` (heuristic), `dom` (found in HTML), `manual` (you flagged it)
 
 4. **Download or copy**
    - Click **⬇️ Download** to save the file
    - Click **📋 Copy URL** to copy the model URL
-   - Use **🗑️ Clear List** to reset the detected models
+   - Use **🗑️ Clear Models** to reset the detected models
+
+### Network Inspector (advanced)
+
+When auto-detection misses a model — because it's served from a CDN with a generic URL, comes through as `application/octet-stream`, or is loaded via a custom protocol — switch to the **Network** tab.
+
+- See every request the page made (capped at the last 600 per tab)
+- Filter by URL/content-type text, resource type (XHR, Fetch, Image, Media, …), or minimum size
+- Toggle **Flagged only** to see what the extension already detected
+- Click any row to expand: shows full URL, method, content-type, size, status
+- **🏷️ Flag as model** — promotes the request into the Models tab so you can download it
+- **⬇️ Download** directly from the inspector even without flagging
 
 ### Example Scenarios
 
@@ -212,20 +229,30 @@ The service worker runs in the background and intercepts all network requests us
 
 **Detection Logic:**
 ```javascript
-// Detects GLB/GLTF files by:
-1. File extension matching: .glb or .gltf in URL
-2. Content-Type headers: model/gltf-binary, model/gltf+json
-3. URL pattern matching: Contains .glb or .gltf anywhere
+// Each request is scored as model / not-model by:
+1. URL extension whitelist
+   .glb .gltf .m3f .3mf .fbx .obj .mtl .usdz .usdc .usd
+   .stl .ply .dae .3ds .blend .x3d .vrml          → high confidence
+2. Content-Type sniffing
+   model/gltf-binary, model/gltf+json, model/3mf,
+   model/vnd.collada+xml, model/vnd.usdz+zip,
+   application/sla, application/vnd.autodesk.fbx   → high confidence
+3. Heuristic — large binary (octet-stream, ≥ 50 KB) with a
+   model-ish URL (/model/, /mesh/, /asset/, /3d/, /scene/,
+   /avatar/)                                        → low confidence
+4. Manual flag from the Network Inspector           → manual confidence
+5. DOM scan in the content script                   → dom confidence
 ```
 
 **What it does:**
-- Listens to `chrome.webRequest.onCompleted` event
-- Checks each request against detection criteria
-- Extracts filename from URL path
-- Reads Content-Length header for file size
-- Stores models in a Map indexed by tab ID
+- Listens to `onBeforeRequest`, `onHeadersReceived`, `onCompleted`, and `onErrorOccurred`
+- Builds a per-tab request log (capped at 600 entries) for the Network Inspector
+- Classifies each response using extension + content-type + size + URL keywords
+- Extracts filename from URL path and appends the correct extension if missing
+- Stores confirmed models in a Map indexed by tab ID
 - Updates extension badge with model count
 - Prevents duplicate entries for the same URL
+- Resets per-tab state on top-level navigation only (subframe navigations preserved)
 
 **Why a service worker?**
 - Always running in the background
@@ -239,12 +266,14 @@ Injected into every webpage to scan the DOM for model URLs that might not trigge
 
 **Scanning Strategy:**
 ```javascript
-// Searches for models in:
-1. <script> tags containing URLs
-2. Data attributes (data-src, data-url, data-model)
-3. <a> tags with .glb/.gltf hrefs
-4. <canvas> and <model-viewer> src attributes
-5. Dynamically loaded content
+// Searches every supported format in:
+1. <script> tags containing absolute URLs
+2. Data attributes (data-src, data-url, data-model, data-glb,
+   data-gltf, data-asset, data-file, data-href, data-model-src)
+3. <a href> and <iframe src> / <source src>
+4. <model-viewer src>, <a-asset-item>, ios-src (USDZ AR)
+5. Stylesheets — url() references in same-origin CSS rules
+6. Dynamically loaded content (throttled MutationObserver, 60s)
 ```
 
 **Advanced Features:**
@@ -264,14 +293,16 @@ Injected into every webpage to scan the DOM for model URLs that might not trigge
 The user interface that displays when clicking the extension icon.
 
 **Features:**
-- Queries background script for models in current tab
-- Displays each model with filename and size
-- Provides download and copy buttons
-- Auto-refreshes every 2 seconds
+- Two tabs: **Models** (auto-detected) and **Network** (every request)
+- Network tab supports text search, resource-type filter, minimum size filter, and a "flagged only" toggle
+- Click any network row to expand full details and flag/download
+- Format badges color-coded per format (GLB blue, FBX amber, USDZ red, …)
+- Confidence badges (low / dom / manual) make it obvious why something was flagged
+- Auto-refreshes every 1.5 seconds while open
 - Shows empty state when no models detected
-- Formats file sizes (Bytes → KB → MB → GB)
+- Formats file sizes (B → KB → MB → GB)
 - Truncates long URLs for readability
-- Uses secure DOM methods (textContent) to prevent XSS
+- Uses secure DOM methods (textContent + createElement) to prevent XSS
 
 **Download Flow:**
 ```javascript
@@ -302,10 +333,11 @@ File saved to user's chosen location
 
 | Permission | Purpose | Why It's Needed |
 |------------|---------|-----------------|
-| `webRequest` | Monitor network requests | To detect GLB/GLTF files as they're downloaded |
+| `webRequest` | Monitor network requests | To detect 3D model files and feed the Network Inspector |
 | `downloads` | Save files to disk | To download detected models to user's computer |
 | `storage` | Remember detected models | To maintain model list per tab |
 | `activeTab` | Access current page | To inject content script for DOM scanning |
+| `tabs` | Track per-tab state | To clear request log/models on navigation and update badges |
 | `<all_urls>` | Work on any website | To intercept requests across all domains |
 
 ### File Structure
@@ -410,14 +442,14 @@ File saved to user's chosen location
 ### Adding Features
 
 Some ideas for contributions:
-- Support for OBJ/FBX formats
-- Model preview thumbnails
-- Batch download all models
-- Export model list as JSON
-- Filter by file size
+- Model preview thumbnails (Three.js render)
+- Batch download all models as zip
+- Export model list / network log as JSON or HAR
+- Persistent download history across sessions
 - Dark/light theme toggle
 - Keyboard shortcuts
-- Download history
+- Custom format whitelist via options page
+- Blob URL detection via content-script fetch interception
 
 ### Testing
 

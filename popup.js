@@ -1,192 +1,393 @@
-// Popup script
-let currentTabId = null;
+// 3D Model Extractor popup — Models tab + Network Inspector tab.
 
-// Get current tab and load models
+let currentTabId = null;
+let networkFilter = { text: '', type: '', minSize: 0, flaggedOnly: false };
+let expandedRequestIds = new Set();
+
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   if (tabs[0]) {
     currentTabId = tabs[0].id;
-    loadModels();
+    refresh();
   }
 });
 
-function loadModels() {
-  chrome.runtime.sendMessage(
-    { action: 'getModels', tabId: currentTabId },
-    (response) => {
-      displayModels(response.models || []);
-    }
-  );
+// --- tab switching -----------------------------------------------------------
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+  });
+});
+
+// --- filter wiring -----------------------------------------------------------
+document.getElementById('filter-input').addEventListener('input', (e) => {
+  networkFilter.text = e.target.value.toLowerCase();
+  renderRequests();
+});
+document.getElementById('filter-type').addEventListener('change', (e) => {
+  networkFilter.type = e.target.value;
+  renderRequests();
+});
+document.getElementById('filter-min-size').addEventListener('change', (e) => {
+  networkFilter.minSize = parseInt(e.target.value, 10) || 0;
+  renderRequests();
+});
+document.getElementById('only-flagged').addEventListener('click', (e) => {
+  networkFilter.flaggedOnly = !networkFilter.flaggedOnly;
+  e.target.style.background = networkFilter.flaggedOnly ? '#667eea' : '#2d2d2d';
+  e.target.style.color = networkFilter.flaggedOnly ? '#fff' : '#e0e0e0';
+  renderRequests();
+});
+document.getElementById('clear-requests').addEventListener('click', () => {
+  chrome.runtime.sendMessage({ action: 'clearRequests', tabId: currentTabId }, refresh);
+});
+
+// --- data loading ------------------------------------------------------------
+let cachedModels = [];
+let cachedRequests = [];
+
+function refresh() {
+  chrome.runtime.sendMessage({ action: 'getModels', tabId: currentTabId }, (resp) => {
+    cachedModels = (resp && resp.models) || [];
+    renderModels();
+    document.getElementById('models-count').textContent = cachedModels.length;
+  });
+  chrome.runtime.sendMessage({ action: 'getRequests', tabId: currentTabId }, (resp) => {
+    cachedRequests = (resp && resp.requests) || [];
+    renderRequests();
+    document.getElementById('network-count').textContent = cachedRequests.length;
+  });
 }
 
-function displayModels(models) {
-  const statusEl = document.getElementById('status');
+// --- models rendering --------------------------------------------------------
+function renderModels() {
+  const statusEl = document.getElementById('models-status');
   const containerEl = document.getElementById('models-container');
-
   containerEl.textContent = '';
 
-  if (models.length === 0) {
+  if (cachedModels.length === 0) {
     statusEl.className = 'status empty';
     statusEl.textContent = '';
-
-    const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state';
-
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
     const icon = document.createElement('div');
     icon.className = 'empty-icon';
     icon.textContent = '🔍';
-
     const text = document.createElement('div');
     text.className = 'empty-text';
     text.textContent = 'No 3D models detected yet.';
-    const br = document.createElement('br');
-    text.appendChild(br);
-    text.appendChild(document.createTextNode('Browse a page with GLB/GLTF files or refresh the page.'));
-
-    emptyState.appendChild(icon);
-    emptyState.appendChild(text);
-    statusEl.appendChild(emptyState);
+    text.appendChild(document.createElement('br'));
+    text.appendChild(document.createTextNode('Browse a page with 3D content, or open the Network tab to flag a request manually.'));
+    empty.appendChild(icon);
+    empty.appendChild(text);
+    statusEl.appendChild(empty);
     return;
   }
 
   statusEl.className = 'status success';
-  statusEl.textContent = `Found ${models.length} 3D model${models.length > 1 ? 's' : ''}`;
+  statusEl.textContent = `Found ${cachedModels.length} model${cachedModels.length > 1 ? 's' : ''}`;
 
-  const listEl = document.createElement('div');
-  listEl.className = 'models-list';
+  const list = document.createElement('div');
+  list.className = 'models-list';
 
-  models.forEach((model) => {
-    const itemEl = document.createElement('div');
-    itemEl.className = 'model-item';
+  cachedModels.forEach((model) => {
+    const item = document.createElement('div');
+    item.className = 'model-item';
 
-    // Format file size
-    let sizeText = 'Unknown size';
-    if (model.size && model.size !== 'Unknown') {
-      const bytes = parseInt(model.size);
-      if (!isNaN(bytes)) {
-        sizeText = formatBytes(bytes);
-      }
-    }
-
-    // Create header
     const header = document.createElement('div');
     header.className = 'model-header';
 
-    const filename = document.createElement('div');
-    filename.className = 'model-filename';
-    filename.textContent = model.filename;
+    const fname = document.createElement('div');
+    fname.className = 'model-filename';
+
+    const fmt = document.createElement('span');
+    const formatKey = (model.format || 'unknown').toLowerCase();
+    fmt.className = 'badge fmt fmt-' + formatKey;
+    fmt.textContent = formatKey;
+    fname.appendChild(fmt);
+
+    if (model.confidence && model.confidence !== 'high') {
+      const conf = document.createElement('span');
+      conf.className = 'badge conf-' + model.confidence;
+      conf.textContent = model.confidence;
+      fname.appendChild(conf);
+    }
+
+    fname.appendChild(document.createTextNode(' ' + model.filename));
 
     const size = document.createElement('div');
     size.className = 'model-size';
-    size.textContent = sizeText;
+    size.textContent = formatSize(model.size);
 
-    header.appendChild(filename);
+    header.appendChild(fname);
     header.appendChild(size);
 
-    // Create URL display
     const urlDiv = document.createElement('div');
     urlDiv.className = 'model-url';
-    urlDiv.textContent = truncateUrl(model.url);
+    urlDiv.textContent = truncate(model.url, 80);
+    urlDiv.title = model.url;
 
-    // Create actions
     const actions = document.createElement('div');
     actions.className = 'model-actions';
 
-    const downloadBtn = document.createElement('button');
-    downloadBtn.className = 'btn btn-download';
-    downloadBtn.textContent = '⬇️ Download';
-    downloadBtn.dataset.url = model.url;
-    downloadBtn.dataset.filename = model.filename;
-    downloadBtn.addEventListener('click', handleDownload);
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'btn btn-download';
+    dlBtn.textContent = '⬇️ Download';
+    dlBtn.addEventListener('click', () => downloadModel(dlBtn, model.url, model.filename));
+    actions.appendChild(dlBtn);
 
     const copyBtn = document.createElement('button');
     copyBtn.className = 'btn btn-copy';
     copyBtn.textContent = '📋 Copy URL';
-    copyBtn.dataset.url = model.url;
-    copyBtn.addEventListener('click', handleCopy);
-
-    actions.appendChild(downloadBtn);
+    copyBtn.addEventListener('click', () => copyUrl(copyBtn, model.url));
     actions.appendChild(copyBtn);
 
-    itemEl.appendChild(header);
-    itemEl.appendChild(urlDiv);
-    itemEl.appendChild(actions);
-
-    listEl.appendChild(itemEl);
+    item.appendChild(header);
+    item.appendChild(urlDiv);
+    item.appendChild(actions);
+    list.appendChild(item);
   });
 
-  containerEl.appendChild(listEl);
+  containerEl.appendChild(list);
 
-  // Add clear button
   const clearBtn = document.createElement('button');
   clearBtn.className = 'btn-clear';
-  clearBtn.textContent = '🗑️ Clear List';
-  clearBtn.addEventListener('click', clearModels);
+  clearBtn.textContent = '🗑️ Clear Models';
+  clearBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ action: 'clearModels', tabId: currentTabId }, refresh);
+  });
   containerEl.appendChild(clearBtn);
 }
 
-function handleDownload(e) {
-  const url = e.target.dataset.url;
-  const filename = e.target.dataset.filename;
+// --- network rendering -------------------------------------------------------
+function renderRequests() {
+  const tableEl = document.getElementById('req-table');
+  const counterEl = document.getElementById('req-count-text');
+  tableEl.textContent = '';
 
-  e.target.textContent = '⏳ Downloading...';
-  e.target.disabled = true;
-
-  chrome.runtime.sendMessage(
-    { action: 'downloadModel', url, filename },
-    (response) => {
-      if (response.success) {
-        e.target.textContent = '✅ Downloaded';
-        setTimeout(() => {
-          e.target.textContent = '⬇️ Download';
-          e.target.disabled = false;
-        }, 2000);
-      } else {
-        e.target.textContent = '❌ Failed';
-        console.error('Download failed:', response.error);
-        setTimeout(() => {
-          e.target.textContent = '⬇️ Download';
-          e.target.disabled = false;
-        }, 2000);
-      }
+  const filtered = cachedRequests.filter((r) => {
+    if (networkFilter.flaggedOnly && !r.flagged) return false;
+    if (networkFilter.type && r.type !== networkFilter.type) return false;
+    if (networkFilter.minSize && (!r.size || r.size < networkFilter.minSize)) return false;
+    if (networkFilter.text) {
+      const hay = (r.url + ' ' + (r.contentType || '')).toLowerCase();
+      if (!hay.includes(networkFilter.text)) return false;
     }
-  );
-}
+    return true;
+  });
 
-function handleCopy(e) {
-  const url = e.target.dataset.url;
+  counterEl.textContent = `${filtered.length} of ${cachedRequests.length} requests`;
 
-  navigator.clipboard.writeText(url).then(() => {
-    const originalText = e.target.textContent;
-    e.target.textContent = '✅ Copied!';
-    setTimeout(() => {
-      e.target.textContent = originalText;
-    }, 2000);
-  }).catch(err => {
-    console.error('Failed to copy:', err);
+  if (filtered.length === 0) {
+    const empty = document.createElement('div');
+    empty.style.padding = '40px 20px';
+    empty.style.textAlign = 'center';
+    empty.style.color = '#666';
+    empty.style.fontSize = '12px';
+    empty.textContent = cachedRequests.length === 0
+      ? 'No traffic captured yet. Reload the page with the popup open.'
+      : 'No requests match the current filters.';
+    tableEl.appendChild(empty);
+    return;
+  }
+
+  // Most recent first.
+  const sorted = filtered.slice().reverse();
+
+  sorted.forEach((req) => {
+    const row = document.createElement('div');
+    row.className = 'req-row' + (req.flagged ? ' flagged' : '') + (expandedRequestIds.has(req.requestId) ? ' expanded' : '');
+
+    const grid = document.createElement('div');
+    grid.className = 'req-grid';
+
+    const type = document.createElement('div');
+    type.className = 'req-type';
+    type.textContent = shortType(req.type);
+
+    const url = document.createElement('div');
+    url.className = 'req-url';
+    url.textContent = shortUrl(req.url);
+    url.title = req.url;
+
+    const size = document.createElement('div');
+    size.className = 'req-size';
+    size.textContent = formatSize(req.size);
+
+    const status = document.createElement('div');
+    const statusClass = req.status === null ? '' :
+      req.status >= 500 ? 's-5' :
+      req.status >= 400 ? 's-4' :
+      req.status >= 300 ? 's-3' :
+      req.status >= 200 ? 's-200' : '';
+    status.className = 'req-status ' + statusClass;
+    status.textContent = req.status === null ? '…' : req.status < 0 ? 'err' : req.status;
+
+    grid.appendChild(type);
+    grid.appendChild(url);
+    grid.appendChild(size);
+    grid.appendChild(status);
+    row.appendChild(grid);
+
+    // Detail panel
+    const detail = document.createElement('div');
+    detail.className = 'req-detail';
+
+    const kvs = [
+      ['URL', req.url],
+      ['Method', req.method],
+      ['Type', req.type],
+      ['Content-Type', req.contentType || '—'],
+      ['Size', formatSize(req.size)],
+      ['Status', req.status === null ? 'pending' : req.status]
+    ];
+    kvs.forEach(([k, v]) => {
+      const kv = document.createElement('div');
+      kv.className = 'kv';
+      const ke = document.createElement('div');
+      ke.className = 'k';
+      ke.textContent = k;
+      const ve = document.createElement('div');
+      ve.className = 'v';
+      ve.textContent = v;
+      kv.appendChild(ke);
+      kv.appendChild(ve);
+      detail.appendChild(kv);
+    });
+
+    const detailActions = document.createElement('div');
+    detailActions.className = 'req-actions';
+
+    const flagBtn = document.createElement('button');
+    flagBtn.className = 'btn btn-flag';
+    flagBtn.textContent = req.flagged ? '✓ Flagged as model' : '🏷️ Flag as model';
+    flagBtn.disabled = req.flagged;
+    flagBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      chrome.runtime.sendMessage(
+        { action: 'flagAsModel', tabId: currentTabId, url: req.url },
+        () => refresh()
+      );
+    });
+    detailActions.appendChild(flagBtn);
+
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'btn btn-download';
+    dlBtn.textContent = '⬇️ Download';
+    dlBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      downloadModel(dlBtn, req.url, guessFilename(req.url));
+    });
+    detailActions.appendChild(dlBtn);
+
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn btn-copy';
+    copyBtn.textContent = '📋 Copy';
+    copyBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      copyUrl(copyBtn, req.url);
+    });
+    detailActions.appendChild(copyBtn);
+
+    detail.appendChild(detailActions);
+    row.appendChild(detail);
+
+    row.addEventListener('click', () => {
+      if (expandedRequestIds.has(req.requestId)) {
+        expandedRequestIds.delete(req.requestId);
+        row.classList.remove('expanded');
+      } else {
+        expandedRequestIds.add(req.requestId);
+        row.classList.add('expanded');
+      }
+    });
+
+    tableEl.appendChild(row);
   });
 }
 
-function clearModels() {
+// --- shared helpers ----------------------------------------------------------
+function downloadModel(btn, url, filename) {
+  const original = btn.textContent;
+  btn.textContent = '⏳ Downloading...';
+  btn.disabled = true;
   chrome.runtime.sendMessage(
-    { action: 'clearModels', tabId: currentTabId },
-    () => {
-      loadModels();
+    { action: 'downloadModel', url, filename },
+    (resp) => {
+      if (resp && resp.success) {
+        btn.textContent = '✅ Downloaded';
+      } else {
+        btn.textContent = '❌ Failed';
+        if (resp && resp.error) console.error('Download failed:', resp.error);
+      }
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.disabled = false;
+      }, 1800);
     }
   );
 }
 
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+function copyUrl(btn, url) {
+  const original = btn.textContent;
+  navigator.clipboard.writeText(url).then(() => {
+    btn.textContent = '✅ Copied';
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  }).catch((err) => {
+    console.error('Copy failed:', err);
+    btn.textContent = '❌ Copy failed';
+    setTimeout(() => { btn.textContent = original; }, 1500);
+  });
 }
 
-function truncateUrl(url) {
-  if (url.length <= 60) return url;
-  return url.substring(0, 40) + '...' + url.substring(url.length - 17);
+function guessFilename(url) {
+  try {
+    const u = new URL(url);
+    const path = u.pathname;
+    let last = path.substring(path.lastIndexOf('/') + 1) || 'model.bin';
+    last = last.split('?')[0].split('#')[0];
+    if (!/\.[a-z0-9]{2,6}$/i.test(last)) last += '.bin';
+    return last;
+  } catch (e) {
+    return 'model.bin';
+  }
 }
 
-// Auto-refresh every 2 seconds
-setInterval(loadModels, 2000);
+function formatSize(bytes) {
+  if (bytes === null || bytes === undefined || bytes === 'Unknown') return '—';
+  const n = typeof bytes === 'number' ? bytes : parseInt(bytes, 10);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.min(Math.floor(Math.log(n) / Math.log(1024)), units.length - 1);
+  return (n / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+}
+
+function truncate(s, max) {
+  if (!s || s.length <= max) return s;
+  return s.substring(0, Math.floor(max * 0.6)) + '…' + s.substring(s.length - Math.floor(max * 0.3));
+}
+
+function shortUrl(url) {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.length > 50 ? '…' + u.pathname.slice(-47) : u.pathname;
+    return u.hostname + path;
+  } catch (e) {
+    return truncate(url, 70);
+  }
+}
+
+function shortType(type) {
+  const map = {
+    xmlhttprequest: 'XHR',
+    stylesheet: 'CSS',
+    main_frame: 'DOC',
+    sub_frame: 'FRM'
+  };
+  return map[type] || type;
+}
+
+// Live refresh while popup is open.
+setInterval(refresh, 1500);

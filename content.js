@@ -1,72 +1,122 @@
-// Content script to search for GLB files in the page
-(function() {
+// Content script — scrape DOM, inline scripts, and attributes for 3D model URLs.
+(function () {
   'use strict';
 
-  // Search for GLB/GLTF URLs in the page
-  function searchForModels() {
-    const models = new Set();
+  const EXTENSIONS = [
+    'glb', 'gltf', 'm3f', '3mf', 'fbx', 'obj', 'usdz', 'usdc', 'usd',
+    'stl', 'ply', 'dae', '3ds', 'blend', 'x3d', 'vrml'
+  ];
 
-    // Search in all script tags
-    document.querySelectorAll('script').forEach(script => {
-      const content = script.textContent;
-      const matches = content.match(/https?:\/\/[^\s"']+\.glb|https?:\/\/[^\s"']+\.gltf/gi);
-      if (matches) {
-        matches.forEach(url => models.add(url));
+  // Build a single regex for fast scanning of inline content.
+  const urlPattern = new RegExp(
+    `https?:\\/\\/[^\\s"'<>\\)\\]]+?\\.(?:${EXTENSIONS.join('|')})(?:\\?[^\\s"'<>\\)\\]]*)?`,
+    'gi'
+  );
+
+  // Resolve relative URLs against the current document.
+  function absolutize(value) {
+    try {
+      return new URL(value, document.baseURI).href;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function looksLikeModel(value) {
+    if (!value) return false;
+    const v = String(value).toLowerCase();
+    return EXTENSIONS.some(ext => v.includes('.' + ext));
+  }
+
+  function searchForModels() {
+    const found = new Set();
+
+    // 1. Inline <script> blocks.
+    document.querySelectorAll('script').forEach((script) => {
+      if (!script.textContent) return;
+      const matches = script.textContent.match(urlPattern);
+      if (matches) matches.forEach((u) => found.add(u));
+    });
+
+    // 2. Data-* attributes commonly used by 3D viewers.
+    const dataAttrs = ['data-src', 'data-url', 'data-model', 'data-glb', 'data-gltf', 'data-asset', 'data-file', 'data-href'];
+    document.querySelectorAll('*').forEach((el) => {
+      for (const attr of dataAttrs) {
+        const value = el.getAttribute(attr);
+        if (looksLikeModel(value)) {
+          const abs = absolutize(value);
+          if (abs) found.add(abs);
+        }
       }
     });
 
-    // Search in data attributes
-    document.querySelectorAll('[data-src], [data-url], [data-model]').forEach(el => {
-      const attrs = ['data-src', 'data-url', 'data-model'];
-      attrs.forEach(attr => {
-        const value = el.getAttribute(attr);
-        if (value && (value.includes('.glb') || value.includes('.gltf'))) {
-          models.add(value);
+    // 3. Anchor links + iframe sources.
+    document.querySelectorAll('a[href], iframe[src], source[src]').forEach((el) => {
+      const value = el.getAttribute('href') || el.getAttribute('src');
+      if (looksLikeModel(value)) {
+        const abs = absolutize(value);
+        if (abs) found.add(abs);
+      }
+    });
+
+    // 4. <model-viewer>, <a-asset-item>, <model-entity>, custom viewers.
+    document.querySelectorAll('model-viewer, a-asset-item, [src], [data-model-src]').forEach((el) => {
+      const candidates = [
+        el.getAttribute && el.getAttribute('src'),
+        el.getAttribute && el.getAttribute('data-model-src'),
+        el.getAttribute && el.getAttribute('ios-src')
+      ];
+      candidates.forEach((value) => {
+        if (looksLikeModel(value)) {
+          const abs = absolutize(value);
+          if (abs) found.add(abs);
         }
       });
     });
 
-    // Search in all links and anchors
-    document.querySelectorAll('a[href*=".glb"], a[href*=".gltf"]').forEach(a => {
-      models.add(a.href);
-    });
-
-    // Search for blob URLs in canvas or model viewers
-    document.querySelectorAll('canvas, model-viewer').forEach(el => {
-      if (el.src && (el.src.includes('.glb') || el.src.includes('.gltf'))) {
-        models.add(el.src);
+    // 5. Stylesheets — some sites reference assets in CSS variables / url().
+    try {
+      for (const sheet of document.styleSheets) {
+        let rules;
+        try { rules = sheet.cssRules; } catch (e) { continue; } // cross-origin
+        if (!rules) continue;
+        for (const rule of rules) {
+          const text = rule.cssText || '';
+          const matches = text.match(urlPattern);
+          if (matches) matches.forEach((u) => found.add(u));
+        }
       }
-    });
+    } catch (e) {
+      // ignore — best effort
+    }
 
-    // Send found models to background script
-    if (models.size > 0) {
+    if (found.size > 0) {
       chrome.runtime.sendMessage({
         action: 'foundModels',
-        models: Array.from(models)
+        models: Array.from(found)
       });
     }
   }
 
-  // Run search when page loads
+  // Initial sweep + watch for late-loaded content.
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', searchForModels);
   } else {
     searchForModels();
   }
 
-  // Monitor for dynamically added content
+  let lastRun = 0;
   const observer = new MutationObserver(() => {
+    const now = Date.now();
+    if (now - lastRun < 500) return; // throttle
+    lastRun = now;
     searchForModels();
   });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true
-  });
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
 
-  // Stop observing after 30 seconds to avoid performance issues
-  setTimeout(() => {
-    observer.disconnect();
-  }, 30000);
-
+  // Disconnect after a generous window — we still have the network layer running.
+  setTimeout(() => observer.disconnect(), 60_000);
 })();
